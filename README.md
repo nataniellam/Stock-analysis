@@ -1,10 +1,18 @@
 # Stockwise
 
 A stock analysis app: live quotes and fundamentals, a portfolio tracker, a watchlist, and
-price/volume alerts. Backend is a small Express API (Yahoo Finance, no API key needed);
+price/volume alerts. Backend is a small Express API (Alpha Vantage for market data);
 frontend is React (Vite).
 
 ## Run it locally
+
+Market data requires a free Alpha Vantage API key (even for local dev) — sign up at
+[alphavantage.co](https://www.alphavantage.co/support/#api-key) (just an email, instant),
+then put it in `backend/.env` (copy `backend/.env.example`):
+
+```
+ALPHA_VANTAGE_API_KEY=your-key-here
+```
 
 ```bash
 # terminal 1
@@ -20,6 +28,13 @@ npm run dev            # http://localhost:5173
 
 Open http://localhost:5173. The frontend's dev server proxies `/api/*` to the backend
 automatically (see `frontend/vite.config.js`) — no configuration needed locally.
+
+**Alpha Vantage's free tier is capped at 25 requests/day, 5/min.** The backend caches
+aggressively to make this workable — quotes for 30 minutes, charts/fundamentals for 24
+hours — so prices refresh roughly every half hour rather than truly live, and repeated
+polling (watchlist, portfolio, alerts) mostly hits the cache instead of the API. Checking
+many different new symbols in a single day can still burn through the daily quota; when
+that happens, requests return a clear "rate limit" error rather than failing silently.
 
 Your watchlist, portfolio, and alerts are stored in `backend/*.json` files (gitignored) —
 they persist across restarts as long as those files stick around on the machine running
@@ -53,9 +68,9 @@ gh repo create stockwise --private --source=. --push
    `npm install`, start `node server.js`).
    - No blueprint support? Create a **Web Service** manually instead: root directory
      `backend`, build command `npm install`, start command `node server.js`.
-3. It'll ask you to fill in the `CORS_ORIGIN` env var — leave it blank for now (you'll set
-   it after step 3, once you know your Vercel URL). You can also just leave it unset
-   permanently; the backend defaults to allowing any origin, which is fine for personal use.
+3. It'll ask you to fill in a few env vars:
+   - `ALPHA_VANTAGE_API_KEY` — your key from [alphavantage.co](https://www.alphavantage.co/support/#api-key) (required — the backend can't fetch any market data without it).
+   - `CORS_ORIGIN` — leave blank for now (you'll set it after step 3, once you know your Vercel URL). You can also leave it unset permanently; the backend defaults to allowing any origin, which is fine for personal use.
 4. Deploy. Note the URL Render gives you, e.g. `https://stockwise-backend.onrender.com`.
 
 **Free tier note:** the free plan spins the service down after ~15 minutes of no traffic.
@@ -94,7 +109,22 @@ Back in Render, set `CORS_ORIGIN` to your Vercel URL from step 3 and redeploy. T
 the backend only accept requests from your frontend instead of any origin — worth doing if
 you ever share the link.
 
+**Get this value exactly right** — it must be the full origin, protocol included, no
+trailing slash, and it must be your stable production URL, not a one-off preview deployment
+URL (Vercel generates a new preview URL on every push; your production domain, shown at the
+top of the project's Vercel dashboard, stays constant):
+
+```
+https://stockwise-yourname.vercel.app
+```
+
+A missing `https://`, a trailing slash, or a preview URL there will make every request fail
+with a CORS error in the browser console ("Failed to fetch" on the page) even though the
+backend itself is up and healthy — check this env var first if that happens.
+
 ## Notes / limitations
 
 - No authentication — anyone with the URL can view/edit your watchlist, portfolio, and
   alerts. Fine as long as you don't share the link.
+- See "Run it locally" above for the Alpha Vantage free-tier rate limit (25 requests/day)
+  and how caching works around it.

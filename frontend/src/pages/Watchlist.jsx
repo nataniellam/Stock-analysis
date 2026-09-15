@@ -72,7 +72,7 @@ export default function Watchlist() {
               return (
                 <tr key={q.symbol} className="table-row-clickable" onClick={() => navigate(`/analysis/${q.symbol}`)}>
                   <td className="mono">{q.symbol}</td>
-                  <td>{q.shortName}</td>
+                  <td>{q.shortName || q.longName || '—'}</td>
                   <td>${q.regularMarketPrice?.toFixed(2)}</td>
                   <td className={positive ? 'up' : 'down'}>
                     {positive ? '+' : ''}

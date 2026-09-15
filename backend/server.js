@@ -4,8 +4,6 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { Redis } = require('@upstash/redis');
-const YahooFinance = require('yahoo-finance2').default;
-const yahooFinance = new YahooFinance();
 
 const app = express();
 // In production, set CORS_ORIGIN to your deployed frontend's URL (e.g. https://your-app.vercel.app).
@@ -15,6 +13,143 @@ app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
 
 app.get('/', (req, res) => res.send('Stockwise API is running.'));
+
+// --- Market data: Alpha Vantage, with an in-memory cache -------------------------------------
+// Alpha Vantage's free tier is capped at 25 requests/day total, so every call type is cached
+// (quotes for 30 min, search/chart/fundamentals for much longer - they change slowly). This
+// means the frontend's periodic polling mostly hits this cache instead of Alpha Vantage, and
+// stays well under budget for personal use. Data is "fresh as of last cache refresh", not truly
+// real-time, which is the tradeoff for a free, cloud-hosting-friendly data source.
+const ALPHA_VANTAGE_KEY = process.env.ALPHA_VANTAGE_API_KEY;
+const AV_BASE = 'https://www.alphavantage.co/query';
+
+const TTL = {
+  quote: 30 * 60 * 1000, // 30 min
+  chart: 24 * 60 * 60 * 1000, // 24 hr
+  overview: 24 * 60 * 60 * 1000, // 24 hr
+  search: 60 * 60 * 1000, // 1 hr
+};
+
+const cache = new Map();
+
+async function cached(key, ttlMs, fetcher) {
+  const hit = cache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  const data = await fetcher();
+  cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  return data;
+}
+
+async function avFetch(params) {
+  if (!ALPHA_VANTAGE_KEY) {
+    throw new Error('ALPHA_VANTAGE_API_KEY is not set on the server');
+  }
+  const url = `${AV_BASE}?${new URLSearchParams({ ...params, apikey: ALPHA_VANTAGE_KEY })}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  const message = data.Note || data.Information || data['Error Message'];
+  if (message) {
+    const err = new Error(message);
+    err.rateLimited = /rate limit|frequency|per day|premium/i.test(message);
+    throw err;
+  }
+  return data;
+}
+
+function numOrNull(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function fetchQuote(symbol) {
+  return cached(`quote:${symbol}`, TTL.quote, async () => {
+    const data = await avFetch({ function: 'GLOBAL_QUOTE', symbol });
+    const q = data['Global Quote'];
+    if (!q || !q['05. price']) throw new Error(`No quote data for ${symbol}`);
+    const overview = cache.get(`overview:${symbol}`)?.data;
+    return {
+      symbol: q['01. symbol'],
+      regularMarketPrice: numOrNull(q['05. price']),
+      regularMarketChange: numOrNull(q['09. change']),
+      regularMarketChangePercent: numOrNull((q['10. change percent'] || '').replace('%', '')),
+      regularMarketVolume: numOrNull(q['06. volume']),
+      shortName: overview?.Name,
+      longName: overview?.Name,
+    };
+  });
+}
+
+async function fetchSearch(query) {
+  return cached(`search:${query.toLowerCase()}`, TTL.search, async () => {
+    const data = await avFetch({ function: 'SYMBOL_SEARCH', keywords: query });
+    return (data.bestMatches || [])
+      .filter((m) => m['3. type'] === 'Equity')
+      .slice(0, 8)
+      .map((m) => ({ symbol: m['1. symbol'], name: m['2. name'], exchange: m['4. region'] }));
+  });
+}
+
+async function fetchChartAllHistory(symbol) {
+  return cached(`chart:${symbol}`, TTL.chart, async () => {
+    const data = await avFetch({ function: 'TIME_SERIES_DAILY', symbol, outputsize: 'full' });
+    const series = data['Time Series (Daily)'];
+    if (!series) throw new Error(`No chart data for ${symbol}`);
+    return Object.entries(series)
+      .map(([date, v]) => ({
+        date: new Date(date).toISOString(),
+        open: numOrNull(v['1. open']),
+        high: numOrNull(v['2. high']),
+        low: numOrNull(v['3. low']),
+        close: numOrNull(v['4. close']),
+        volume: numOrNull(v['5. volume']),
+      }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+  });
+}
+
+async function fetchChart(symbol, range) {
+  const points = await fetchChartAllHistory(symbol);
+  const days = { '1mo': 30, '3mo': 90, '6mo': 182, '1y': 365, '5y': 1825 }[range] || 90;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return points.filter((p) => new Date(p.date).getTime() >= cutoff);
+}
+
+async function fetchOverview(symbol) {
+  return cached(`overview:${symbol}`, TTL.overview, async () => {
+    const data = await avFetch({ function: 'OVERVIEW', symbol });
+    if (!data.Symbol) throw new Error(`No fundamentals for ${symbol}`);
+    return data;
+  });
+}
+
+function shapeAnalysis(o) {
+  return {
+    summaryDetail: {
+      marketCap: numOrNull(o.MarketCapitalization),
+      trailingPE: numOrNull(o.PERatio),
+      fiftyTwoWeekLow: numOrNull(o['52WeekLow']),
+      fiftyTwoWeekHigh: numOrNull(o['52WeekHigh']),
+      averageVolume: null,
+      dividendYield: numOrNull(o.DividendYield),
+      beta: numOrNull(o.Beta),
+    },
+    defaultKeyStatistics: {
+      trailingEps: numOrNull(o.EPS),
+    },
+    financialData: {
+      targetMeanPrice: numOrNull(o.AnalystTargetPrice),
+      profitMargins: numOrNull(o.ProfitMargin),
+      totalRevenue: numOrNull(o.RevenueTTM),
+      debtToEquity: null,
+    },
+    assetProfile: {
+      sector: o.Sector,
+      industry: o.Industry,
+      longBusinessSummary: o.Description,
+      name: o.Name,
+    },
+  };
+}
 
 const WATCHLIST_FILE = path.join(__dirname, 'watchlist.json');
 const PORTFOLIO_FILE = path.join(__dirname, 'portfolio.json');
@@ -63,32 +198,27 @@ function conditionMet(condition, targetValue, quote) {
   return false;
 }
 
+function handleMarketDataError(err, res) {
+  res.status(err.rateLimited ? 429 : 500).json({ error: err.message });
+}
+
 // Search symbols
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
   try {
-    const result = await yahooFinance.search(q, { quotesCount: 8, newsCount: 0 });
-    const quotes = (result.quotes || [])
-      .filter((item) => item.symbol && (item.quoteType === 'EQUITY' || item.quoteType === 'ETF'))
-      .map((item) => ({
-        symbol: item.symbol,
-        name: item.shortname || item.longname || item.symbol,
-        exchange: item.exchange,
-      }));
-    res.json(quotes);
+    res.json(await fetchSearch(q));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleMarketDataError(err, res);
   }
 });
 
 // Quote (current price snapshot)
 app.get('/api/quote/:symbol', async (req, res) => {
   try {
-    const quote = await yahooFinance.quote(req.params.symbol);
-    res.json(quote);
+    res.json(await fetchQuote(req.params.symbol.toUpperCase()));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleMarketDataError(err, res);
   }
 });
 
@@ -96,57 +226,29 @@ app.get('/api/quote/:symbol', async (req, res) => {
 app.get('/api/quotes', async (req, res) => {
   const symbols = (req.query.symbols || '').split(',').filter(Boolean);
   if (symbols.length === 0) return res.json([]);
-  try {
-    const results = await Promise.all(
-      symbols.map((s) => yahooFinance.quote(s).catch(() => null))
-    );
-    res.json(results.filter(Boolean));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  const results = await Promise.all(
+    symbols.map((s) => fetchQuote(s.toUpperCase()).catch(() => null))
+  );
+  res.json(results.filter(Boolean));
 });
 
 // Historical chart data
 app.get('/api/chart/:symbol', async (req, res) => {
-  const { range = '3mo', interval = '1d' } = req.query;
+  const { range = '3mo' } = req.query;
   try {
-    const period1 = rangeToPeriod1(range);
-    const result = await yahooFinance.chart(req.params.symbol, {
-      period1,
-      interval,
-    });
-    const points = (result.quotes || [])
-      .filter((p) => p.close != null)
-      .map((p) => ({
-        date: p.date,
-        close: p.close,
-        open: p.open,
-        high: p.high,
-        low: p.low,
-        volume: p.volume,
-      }));
-    res.json(points);
+    res.json(await fetchChart(req.params.symbol.toUpperCase(), range));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleMarketDataError(err, res);
   }
 });
 
 // Deeper fundamentals/analysis
 app.get('/api/analysis/:symbol', async (req, res) => {
   try {
-    const modules = [
-      'price',
-      'summaryDetail',
-      'defaultKeyStatistics',
-      'financialData',
-      'recommendationTrend',
-      'earningsTrend',
-      'assetProfile',
-    ];
-    const result = await yahooFinance.quoteSummary(req.params.symbol, { modules });
-    res.json(result);
+    const overview = await fetchOverview(req.params.symbol.toUpperCase());
+    res.json(shapeAnalysis(overview));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleMarketDataError(err, res);
   }
 });
 
@@ -221,7 +323,7 @@ app.get('/api/alerts', async (req, res) => {
     const symbols = [...new Set(alerts.filter((a) => !a.triggered).map((a) => a.symbol))];
     let quotesBySymbol = {};
     if (symbols.length > 0) {
-      const quotes = await Promise.all(symbols.map((s) => yahooFinance.quote(s).catch(() => null)));
+      const quotes = await Promise.all(symbols.map((s) => fetchQuote(s).catch(() => null)));
       quotes.filter(Boolean).forEach((q) => (quotesBySymbol[q.symbol] = q));
     }
 
@@ -243,7 +345,7 @@ app.get('/api/alerts', async (req, res) => {
     // Also fetch current values for already-triggered/all alerts for display
     const allSymbols = [...new Set(alerts.map((a) => a.symbol))].filter((s) => !quotesBySymbol[s]);
     if (allSymbols.length > 0) {
-      const quotes = await Promise.all(allSymbols.map((s) => yahooFinance.quote(s).catch(() => null)));
+      const quotes = await Promise.all(allSymbols.map((s) => fetchQuote(s).catch(() => null)));
       quotes.filter(Boolean).forEach((q) => (quotesBySymbol[q.symbol] = q));
     }
 
@@ -299,12 +401,6 @@ app.delete('/api/alerts/:id', async (req, res) => {
   await writeAlerts(alerts);
   res.json(alerts);
 });
-
-function rangeToPeriod1(range) {
-  const now = new Date();
-  const days = { '1mo': 30, '3mo': 90, '6mo': 182, '1y': 365, '5y': 1825 }[range] || 90;
-  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-}
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Backend running on http://localhost:${PORT}`));

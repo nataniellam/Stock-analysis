@@ -7,6 +7,8 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     envVars:
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
       - key: CORS_ORIGIN
         sync: false
       - key: UPSTASH_REDIS_REST_URL

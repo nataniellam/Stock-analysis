@@ -10,11 +10,13 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@upstash/redis": "^1.38.4",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "yahoo-finance2": "^4.0.2"
+    "express": "^5.2.1"
   }
 }
