@@ -274,7 +274,9 @@ const DEEP_DIVE_QUESTIONS = [
 
 const BALANCED_ANALYST_RULES = `Apply a balanced-analyst approach throughout: present the bull case and bear case for each question with equal rigor. Never give a buy/sell verdict or recommendation anywhere in the output. Explicitly flag genuine uncertainty rather than papering over it. In each question's "dataBasis" field, distinguish what is grounded in the real data provided below versus what is your own general knowledge/inference about the company and industry. Where a question surfaces a genuine red flag, state it plainly and weight it appropriately, but frame it as "the bear case's strongest pillar" rather than an automatic disqualification - the reader makes the call.`;
 
-async function geminiGenerate(prompt, schema) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function geminiGenerateOnce(prompt, schema) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY is not set on the server');
   const url = `${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
   const res = await fetch(url, {
@@ -293,11 +295,26 @@ async function geminiGenerate(prompt, schema) {
       `${data.error.message || 'Gemini request failed'} (status: ${data.error.status || res.status}${detail ? `, reason: ${detail}` : ''})`
     );
     err.rateLimited = data.error.code === 429 || /quota|rate/i.test(data.error.message || '');
+    err.retryable = data.error.status === 'UNAVAILABLE' || data.error.code === 503;
     throw err;
   }
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error('Gemini returned no usable content (it may have been blocked by a safety filter)');
   return JSON.parse(text);
+}
+
+// Gemini's free tier occasionally returns a transient "high demand" UNAVAILABLE error -
+// retry a couple of times with backoff before giving up, since a fresh request often succeeds.
+async function geminiGenerate(prompt, schema, attempt = 1) {
+  try {
+    return await geminiGenerateOnce(prompt, schema);
+  } catch (err) {
+    if (err.retryable && attempt < 3) {
+      await sleep(attempt * 1500);
+      return geminiGenerate(prompt, schema, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 async function fetchDeepDive(symbol) {
