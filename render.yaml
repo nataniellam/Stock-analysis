@@ -9,6 +9,8 @@ services:
     envVars:
       - key: TWELVE_DATA_API_KEY
         sync: false
+      - key: FMP_API_KEY
+        sync: false
       - key: CORS_ORIGIN
         sync: false
       - key: UPSTASH_REDIS_REST_URL

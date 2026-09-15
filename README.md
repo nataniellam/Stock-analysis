@@ -1,18 +1,22 @@
 # Stockwise
 
 A stock analysis app: live quotes and fundamentals, a portfolio tracker, a watchlist, and
-price/volume alerts. Backend is a small Express API (Twelve Data for market data);
+price/volume alerts. Backend is a small Express API (Twelve Data for quotes/charts/search,
+Financial Modeling Prep for fundamentals — see "Why two market-data providers" below);
 frontend is React (Vite).
 
 ## Run it locally
 
-Market data requires a free Twelve Data API key (even for local dev) — sign up at
-[twelvedata.com](https://twelvedata.com) (the key is on your dashboard right after signup),
-then put it in `backend/.env` (copy `backend/.env.example`):
+Market data requires two free API keys (even for local dev) — sign up for both, then put
+them in `backend/.env` (copy `backend/.env.example`):
 
 ```
 TWELVE_DATA_API_KEY=your-key-here
+FMP_API_KEY=your-key-here
 ```
+
+- Twelve Data: sign up at [twelvedata.com](https://twelvedata.com) (key is on your dashboard).
+- Financial Modeling Prep: sign up at [site.financialmodelingprep.com/developer/docs](https://site.financialmodelingprep.com/developer/docs).
 
 ```bash
 # terminal 1
@@ -29,12 +33,17 @@ npm run dev            # http://localhost:5173
 Open http://localhost:5173. The frontend's dev server proxies `/api/*` to the backend
 automatically (see `frontend/vite.config.js`) — no configuration needed locally.
 
-**Twelve Data's free tier is capped at 800 requests/day, 8/min.** The backend still caches
-responses (quotes for 5 minutes, charts/fundamentals for 24 hours) so repeated polling
-(watchlist, portfolio, alerts) mostly hits the cache instead of the API, but the much
-higher daily cap means this is far less of a constraint than a typical free-tier stock API —
-normal personal use shouldn't come close to it. If it's ever exceeded, requests return a
-clear "rate limit" error rather than failing silently.
+### Why two market-data providers
+
+Twelve Data's free tier (800 requests/day, 8/min — generous) covers quotes, charts, and
+search for any symbol, but its `/profile` and `/statistics` endpoints (fundamentals: market
+cap, P/E, sector, description, etc.) are paywalled behind a paid plan for effectively every
+symbol except one demo ticker. Financial Modeling Prep's free tier (250 requests/day) covers
+fundamentals for any symbol with no such restriction, so it's used for that part instead.
+The backend still caches everything (quotes 5 min, charts/fundamentals 24 hr) so normal
+personal use — even combined across two providers — stays comfortably within both free
+tiers. If a limit is ever hit, requests return a clear "rate limit" error rather than
+failing silently.
 
 Your watchlist, portfolio, and alerts are stored in `backend/*.json` files (gitignored) —
 they persist across restarts as long as those files stick around on the machine running
@@ -69,7 +78,8 @@ gh repo create stockwise --private --source=. --push
    - No blueprint support? Create a **Web Service** manually instead: root directory
      `backend`, build command `npm install`, start command `node server.js`.
 3. It'll ask you to fill in a few env vars:
-   - `TWELVE_DATA_API_KEY` — your key from [twelvedata.com](https://twelvedata.com) (required — the backend can't fetch any market data without it).
+   - `TWELVE_DATA_API_KEY` — your key from [twelvedata.com](https://twelvedata.com) (required for quotes/charts/search).
+   - `FMP_API_KEY` — your key from [Financial Modeling Prep](https://site.financialmodelingprep.com/developer/docs) (required for the fundamentals stats on the Analysis page).
    - `CORS_ORIGIN` — leave blank for now (you'll set it after step 3, once you know your Vercel URL). You can also leave it unset permanently; the backend defaults to allowing any origin, which is fine for personal use.
 4. Deploy. Note the URL Render gives you, e.g. `https://stockwise-backend.onrender.com`.
 
@@ -128,5 +138,9 @@ itself is up and healthy — check this env var first if that happens.
 
 - No authentication — anyone with the URL can view/edit your watchlist, portfolio, and
   alerts. Fine as long as you don't share the link.
-- See "Run it locally" above for the Twelve Data free-tier rate limit (800 requests/day)
-  and how caching works around it.
+- See "Why two market-data providers" above for why fundamentals use a separate API from
+  quotes/charts, and the free-tier limits/caching for both.
+- A couple of fundamentals fields (`profitMargins`, `debtToEquity`, and the dividend-yield
+  fallback) are mapped from FMP's `ratios-ttm` endpoint on a best-effort basis — if they show
+  as `—` for symbols that should have them, the field names may need a small adjustment in
+  `shapeAnalysis` in `backend/server.js`.

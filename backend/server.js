@@ -138,51 +138,77 @@ async function fetchChart(symbol, range) {
   return points.filter((p) => new Date(p.date).getTime() >= cutoff);
 }
 
+// Fundamentals come from Financial Modeling Prep instead of Twelve Data - Twelve Data's free
+// tier gates /profile and /statistics behind a paid plan for effectively every symbol except
+// one demo ticker. FMP's free tier (250 req/day) covers company profile + basic ratios for any
+// symbol with no such allowlist.
+const FMP_KEY = process.env.FMP_API_KEY;
+const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+
+async function fmpFetch(path) {
+  if (!FMP_KEY) throw new Error('FMP_API_KEY is not set on the server');
+  const sep = path.includes('?') ? '&' : '?';
+  const res = await fetch(`${FMP_BASE}${path}${sep}apikey=${FMP_KEY}`);
+  const data = await res.json();
+  if (data['Error Message']) {
+    const err = new Error(data['Error Message']);
+    err.rateLimited = /limit/i.test(data['Error Message']);
+    throw err;
+  }
+  return data;
+}
+
 async function fetchFundamentals(symbol) {
   return cached(`fundamentals:${symbol}`, TTL.fundamentals, async () => {
-    const [profile, statistics] = await Promise.allSettled([
-      tdFetch('/profile', { symbol }),
-      tdFetch('/statistics', { symbol }),
+    const [profileRes, quoteRes, ratiosRes] = await Promise.allSettled([
+      fmpFetch(`/profile/${symbol}`),
+      fmpFetch(`/quote/${symbol}`),
+      fmpFetch(`/ratios-ttm/${symbol}`),
     ]);
-    if (profile.status === 'rejected') console.error(`[fundamentals] profile ${symbol}:`, profile.reason?.message);
-    if (statistics.status === 'rejected') console.error(`[fundamentals] statistics ${symbol}:`, statistics.reason?.message);
+    if (profileRes.status === 'rejected') console.error(`[fundamentals] profile ${symbol}:`, profileRes.reason?.message);
+    if (quoteRes.status === 'rejected') console.error(`[fundamentals] quote ${symbol}:`, quoteRes.reason?.message);
+    if (ratiosRes.status === 'rejected') console.error(`[fundamentals] ratios ${symbol}:`, ratiosRes.reason?.message);
     return {
-      profile: profile.status === 'fulfilled' ? profile.value : null,
-      statistics: statistics.status === 'fulfilled' ? statistics.value.statistics : null,
+      profile: profileRes.status === 'fulfilled' ? profileRes.value?.[0] : null,
+      quote: quoteRes.status === 'fulfilled' ? quoteRes.value?.[0] : null,
+      ratios: ratiosRes.status === 'fulfilled' ? ratiosRes.value?.[0] : null,
     };
   });
 }
 
-function shapeAnalysis({ profile, statistics }) {
-  const v = statistics?.valuations_metrics || {};
-  const f = statistics?.financials || {};
-  const stats = statistics?.stock_statistics || {};
-  const priceSummary = statistics?.stock_price_summary || {};
-  const dividends = statistics?.dividends_and_splits || {};
+function parseRange(rangeStr) {
+  const parts = (rangeStr || '').split('-').map((s) => numOrNull(s.trim()));
+  return parts.length === 2 ? parts : [null, null];
+}
+
+function shapeAnalysis({ profile, quote, ratios }) {
+  const [profileLow, profileHigh] = parseRange(profile?.range);
+  const dividendYield =
+    profile?.price && profile?.lastDiv ? profile.lastDiv / profile.price : numOrNull(ratios?.dividendYielTTM);
   return {
     summaryDetail: {
-      marketCap: numOrNull(v.market_capitalization),
-      trailingPE: numOrNull(v.trailing_pe),
-      fiftyTwoWeekLow: numOrNull(priceSummary.fifty_two_week_low),
-      fiftyTwoWeekHigh: numOrNull(priceSummary.fifty_two_week_high),
-      averageVolume: numOrNull(stats.avg_90_volume),
-      dividendYield: numOrNull(dividends.trailing_annual_dividend_yield),
-      beta: numOrNull(priceSummary.beta),
+      marketCap: numOrNull(quote?.marketCap ?? profile?.mktCap),
+      trailingPE: numOrNull(quote?.pe ?? ratios?.peRatioTTM),
+      fiftyTwoWeekLow: numOrNull(quote?.yearLow) ?? profileLow,
+      fiftyTwoWeekHigh: numOrNull(quote?.yearHigh) ?? profileHigh,
+      averageVolume: numOrNull(quote?.avgVolume ?? profile?.volAvg),
+      dividendYield,
+      beta: numOrNull(profile?.beta),
     },
     defaultKeyStatistics: {
-      trailingEps: numOrNull(f.income_statement?.diluted_eps_ttm),
+      trailingEps: numOrNull(quote?.eps),
     },
     financialData: {
       targetMeanPrice: null,
-      profitMargins: numOrNull(f.profit_margin),
-      totalRevenue: numOrNull(f.income_statement?.revenue_ttm),
-      debtToEquity: numOrNull(f.balance_sheet?.total_debt_to_equity_mrq),
+      profitMargins: numOrNull(ratios?.netProfitMarginTTM),
+      totalRevenue: null,
+      debtToEquity: numOrNull(ratios?.debtEquityRatioTTM),
     },
     assetProfile: {
       sector: profile?.sector,
       industry: profile?.industry,
       longBusinessSummary: profile?.description,
-      name: profile?.name,
+      name: profile?.companyName,
     },
   };
 }
