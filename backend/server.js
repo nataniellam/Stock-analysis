@@ -14,19 +14,18 @@ app.use(express.json());
 
 app.get('/', (req, res) => res.send('Stockwise API is running.'));
 
-// --- Market data: Alpha Vantage, with an in-memory cache -------------------------------------
-// Alpha Vantage's free tier is capped at 25 requests/day total, so every call type is cached
-// (quotes for 30 min, search/chart/fundamentals for much longer - they change slowly). This
-// means the frontend's periodic polling mostly hits this cache instead of Alpha Vantage, and
-// stays well under budget for personal use. Data is "fresh as of last cache refresh", not truly
-// real-time, which is the tradeoff for a free, cloud-hosting-friendly data source.
-const ALPHA_VANTAGE_KEY = process.env.ALPHA_VANTAGE_API_KEY;
-const AV_BASE = 'https://www.alphavantage.co/query';
+// --- Market data: Twelve Data, with an in-memory cache -----------------------------------------
+// Twelve Data's free tier (800 requests/day, 8/min) is far more generous than Alpha Vantage's,
+// so quotes are cached for just 5 minutes (fresher data); charts/fundamentals still cache for
+// 24 hours since daily bars and company fundamentals don't need finer granularity. This keeps
+// normal polling (watchlist/portfolio/alerts) comfortably under budget for personal use.
+const TWELVE_DATA_KEY = process.env.TWELVE_DATA_API_KEY;
+const TD_BASE = 'https://api.twelvedata.com';
 
 const TTL = {
-  quote: 30 * 60 * 1000, // 30 min
+  quote: 5 * 60 * 1000, // 5 min
   chart: 24 * 60 * 60 * 1000, // 24 hr
-  overview: 24 * 60 * 60 * 1000, // 24 hr
+  fundamentals: 24 * 60 * 60 * 1000, // 24 hr
   search: 60 * 60 * 1000, // 1 hr
 };
 
@@ -40,17 +39,16 @@ async function cached(key, ttlMs, fetcher) {
   return data;
 }
 
-async function avFetch(params) {
-  if (!ALPHA_VANTAGE_KEY) {
-    throw new Error('ALPHA_VANTAGE_API_KEY is not set on the server');
+async function tdFetch(path, params) {
+  if (!TWELVE_DATA_KEY) {
+    throw new Error('TWELVE_DATA_API_KEY is not set on the server');
   }
-  const url = `${AV_BASE}?${new URLSearchParams({ ...params, apikey: ALPHA_VANTAGE_KEY })}`;
+  const url = `${TD_BASE}${path}?${new URLSearchParams({ ...params, apikey: TWELVE_DATA_KEY })}`;
   const res = await fetch(url);
   const data = await res.json();
-  const message = data.Note || data.Information || data['Error Message'];
-  if (message) {
-    const err = new Error(message);
-    err.rateLimited = /rate limit|frequency|per day|premium/i.test(message);
+  if (data.status === 'error' || data.code >= 400) {
+    const err = new Error(data.message || 'Twelve Data request failed');
+    err.rateLimited = /credit|limit|too many/i.test(data.message || '');
     throw err;
   }
   return data;
@@ -63,45 +61,53 @@ function numOrNull(value) {
 
 async function fetchQuote(symbol) {
   return cached(`quote:${symbol}`, TTL.quote, async () => {
-    const data = await avFetch({ function: 'GLOBAL_QUOTE', symbol });
-    const q = data['Global Quote'];
-    if (!q || !q['05. price']) throw new Error(`No quote data for ${symbol}`);
-    const overview = cache.get(`overview:${symbol}`)?.data;
+    const q = await tdFetch('/quote', { symbol });
+    if (!q.close) throw new Error(`No quote data for ${symbol}`);
     return {
-      symbol: q['01. symbol'],
-      regularMarketPrice: numOrNull(q['05. price']),
-      regularMarketChange: numOrNull(q['09. change']),
-      regularMarketChangePercent: numOrNull((q['10. change percent'] || '').replace('%', '')),
-      regularMarketVolume: numOrNull(q['06. volume']),
-      shortName: overview?.Name,
-      longName: overview?.Name,
+      symbol: q.symbol,
+      regularMarketPrice: numOrNull(q.close),
+      regularMarketChange: numOrNull(q.change),
+      regularMarketChangePercent: numOrNull(q.percent_change),
+      regularMarketVolume: numOrNull(q.volume),
+      shortName: q.name,
+      longName: q.name,
     };
   });
 }
 
 async function fetchSearch(query) {
   return cached(`search:${query.toLowerCase()}`, TTL.search, async () => {
-    const data = await avFetch({ function: 'SYMBOL_SEARCH', keywords: query });
-    return (data.bestMatches || [])
-      .filter((m) => m['3. type'] === 'Equity')
+    const data = await tdFetch('/symbol_search', { symbol: query });
+    const matches = (data.data || []).filter((m) => ['Common Stock', 'ETF'].includes(m.instrument_type));
+    // Prefer US-listed results (most relevant for this app) but fall back to all matches
+    // for symbols that only trade on non-US exchanges.
+    const us = matches.filter((m) => m.country === 'United States');
+    return (us.length > 0 ? us : matches)
       .slice(0, 8)
-      .map((m) => ({ symbol: m['1. symbol'], name: m['2. name'], exchange: m['4. region'] }));
+      .map((m) => ({ symbol: m.symbol, name: m.instrument_name, exchange: m.exchange }));
   });
 }
 
 async function fetchChartAllHistory(symbol) {
   return cached(`chart:${symbol}`, TTL.chart, async () => {
-    const data = await avFetch({ function: 'TIME_SERIES_DAILY', symbol, outputsize: 'full' });
-    const series = data['Time Series (Daily)'];
-    if (!series) throw new Error(`No chart data for ${symbol}`);
-    return Object.entries(series)
-      .map(([date, v]) => ({
-        date: new Date(date).toISOString(),
-        open: numOrNull(v['1. open']),
-        high: numOrNull(v['2. high']),
-        low: numOrNull(v['3. low']),
-        close: numOrNull(v['4. close']),
-        volume: numOrNull(v['5. volume']),
+    const end = new Date();
+    const start = new Date(end.getTime() - 5 * 365 * 24 * 60 * 60 * 1000);
+    const data = await tdFetch('/time_series', {
+      symbol,
+      interval: '1day',
+      start_date: start.toISOString().slice(0, 10),
+      end_date: end.toISOString().slice(0, 10),
+      outputsize: 5000,
+    });
+    if (!data.values) throw new Error(`No chart data for ${symbol}`);
+    return data.values
+      .map((v) => ({
+        date: new Date(v.datetime).toISOString(),
+        open: numOrNull(v.open),
+        high: numOrNull(v.high),
+        low: numOrNull(v.low),
+        close: numOrNull(v.close),
+        volume: numOrNull(v.volume),
       }))
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   });
@@ -114,39 +120,49 @@ async function fetchChart(symbol, range) {
   return points.filter((p) => new Date(p.date).getTime() >= cutoff);
 }
 
-async function fetchOverview(symbol) {
-  return cached(`overview:${symbol}`, TTL.overview, async () => {
-    const data = await avFetch({ function: 'OVERVIEW', symbol });
-    if (!data.Symbol) throw new Error(`No fundamentals for ${symbol}`);
-    return data;
+async function fetchFundamentals(symbol) {
+  return cached(`fundamentals:${symbol}`, TTL.fundamentals, async () => {
+    const [profile, statistics] = await Promise.allSettled([
+      tdFetch('/profile', { symbol }),
+      tdFetch('/statistics', { symbol }),
+    ]);
+    return {
+      profile: profile.status === 'fulfilled' ? profile.value : null,
+      statistics: statistics.status === 'fulfilled' ? statistics.value.statistics : null,
+    };
   });
 }
 
-function shapeAnalysis(o) {
+function shapeAnalysis({ profile, statistics }) {
+  const v = statistics?.valuations_metrics || {};
+  const f = statistics?.financials || {};
+  const stats = statistics?.stock_statistics || {};
+  const priceSummary = statistics?.stock_price_summary || {};
+  const dividends = statistics?.dividends_and_splits || {};
   return {
     summaryDetail: {
-      marketCap: numOrNull(o.MarketCapitalization),
-      trailingPE: numOrNull(o.PERatio),
-      fiftyTwoWeekLow: numOrNull(o['52WeekLow']),
-      fiftyTwoWeekHigh: numOrNull(o['52WeekHigh']),
-      averageVolume: null,
-      dividendYield: numOrNull(o.DividendYield),
-      beta: numOrNull(o.Beta),
+      marketCap: numOrNull(v.market_capitalization),
+      trailingPE: numOrNull(v.trailing_pe),
+      fiftyTwoWeekLow: numOrNull(priceSummary.fifty_two_week_low),
+      fiftyTwoWeekHigh: numOrNull(priceSummary.fifty_two_week_high),
+      averageVolume: numOrNull(stats.avg_90_volume),
+      dividendYield: numOrNull(dividends.trailing_annual_dividend_yield),
+      beta: numOrNull(priceSummary.beta),
     },
     defaultKeyStatistics: {
-      trailingEps: numOrNull(o.EPS),
+      trailingEps: numOrNull(f.income_statement?.diluted_eps_ttm),
     },
     financialData: {
-      targetMeanPrice: numOrNull(o.AnalystTargetPrice),
-      profitMargins: numOrNull(o.ProfitMargin),
-      totalRevenue: numOrNull(o.RevenueTTM),
-      debtToEquity: null,
+      targetMeanPrice: null,
+      profitMargins: numOrNull(f.profit_margin),
+      totalRevenue: numOrNull(f.income_statement?.revenue_ttm),
+      debtToEquity: numOrNull(f.balance_sheet?.total_debt_to_equity_mrq),
     },
     assetProfile: {
-      sector: o.Sector,
-      industry: o.Industry,
-      longBusinessSummary: o.Description,
-      name: o.Name,
+      sector: profile?.sector,
+      industry: profile?.industry,
+      longBusinessSummary: profile?.description,
+      name: profile?.name,
     },
   };
 }
@@ -245,8 +261,8 @@ app.get('/api/chart/:symbol', async (req, res) => {
 // Deeper fundamentals/analysis
 app.get('/api/analysis/:symbol', async (req, res) => {
   try {
-    const overview = await fetchOverview(req.params.symbol.toUpperCase());
-    res.json(shapeAnalysis(overview));
+    const fundamentals = await fetchFundamentals(req.params.symbol.toUpperCase());
+    res.json(shapeAnalysis(fundamentals));
   } catch (err) {
     handleMarketDataError(err, res);
   }

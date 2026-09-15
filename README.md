@@ -1,17 +1,17 @@
 # Stockwise
 
 A stock analysis app: live quotes and fundamentals, a portfolio tracker, a watchlist, and
-price/volume alerts. Backend is a small Express API (Alpha Vantage for market data);
+price/volume alerts. Backend is a small Express API (Twelve Data for market data);
 frontend is React (Vite).
 
 ## Run it locally
 
-Market data requires a free Alpha Vantage API key (even for local dev) — sign up at
-[alphavantage.co](https://www.alphavantage.co/support/#api-key) (just an email, instant),
+Market data requires a free Twelve Data API key (even for local dev) — sign up at
+[twelvedata.com](https://twelvedata.com) (the key is on your dashboard right after signup),
 then put it in `backend/.env` (copy `backend/.env.example`):
 
 ```
-ALPHA_VANTAGE_API_KEY=your-key-here
+TWELVE_DATA_API_KEY=your-key-here
 ```
 
 ```bash
@@ -29,12 +29,12 @@ npm run dev            # http://localhost:5173
 Open http://localhost:5173. The frontend's dev server proxies `/api/*` to the backend
 automatically (see `frontend/vite.config.js`) — no configuration needed locally.
 
-**Alpha Vantage's free tier is capped at 25 requests/day, 5/min.** The backend caches
-aggressively to make this workable — quotes for 30 minutes, charts/fundamentals for 24
-hours — so prices refresh roughly every half hour rather than truly live, and repeated
-polling (watchlist, portfolio, alerts) mostly hits the cache instead of the API. Checking
-many different new symbols in a single day can still burn through the daily quota; when
-that happens, requests return a clear "rate limit" error rather than failing silently.
+**Twelve Data's free tier is capped at 800 requests/day, 8/min.** The backend still caches
+responses (quotes for 5 minutes, charts/fundamentals for 24 hours) so repeated polling
+(watchlist, portfolio, alerts) mostly hits the cache instead of the API, but the much
+higher daily cap means this is far less of a constraint than a typical free-tier stock API —
+normal personal use shouldn't come close to it. If it's ever exceeded, requests return a
+clear "rate limit" error rather than failing silently.
 
 Your watchlist, portfolio, and alerts are stored in `backend/*.json` files (gitignored) —
 they persist across restarts as long as those files stick around on the machine running
@@ -69,7 +69,7 @@ gh repo create stockwise --private --source=. --push
    - No blueprint support? Create a **Web Service** manually instead: root directory
      `backend`, build command `npm install`, start command `node server.js`.
 3. It'll ask you to fill in a few env vars:
-   - `ALPHA_VANTAGE_API_KEY` — your key from [alphavantage.co](https://www.alphavantage.co/support/#api-key) (required — the backend can't fetch any market data without it).
+   - `TWELVE_DATA_API_KEY` — your key from [twelvedata.com](https://twelvedata.com) (required — the backend can't fetch any market data without it).
    - `CORS_ORIGIN` — leave blank for now (you'll set it after step 3, once you know your Vercel URL). You can also leave it unset permanently; the backend defaults to allowing any origin, which is fine for personal use.
 4. Deploy. Note the URL Render gives you, e.g. `https://stockwise-backend.onrender.com`.
 
@@ -126,5 +126,5 @@ backend itself is up and healthy — check this env var first if that happens.
 
 - No authentication — anyone with the URL can view/edit your watchlist, portfolio, and
   alerts. Fine as long as you don't share the link.
-- See "Run it locally" above for the Alpha Vantage free-tier rate limit (25 requests/day)
+- See "Run it locally" above for the Twelve Data free-tier rate limit (800 requests/day)
   and how caching works around it.
