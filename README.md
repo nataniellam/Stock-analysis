@@ -140,7 +140,8 @@ itself is up and healthy — check this env var first if that happens.
   alerts. Fine as long as you don't share the link.
 - See "Why two market-data providers" above for why fundamentals use a separate API from
   quotes/charts, and the free-tier limits/caching for both.
-- A couple of fundamentals fields (`profitMargins`, `debtToEquity`, and the dividend-yield
-  fallback) are mapped from FMP's `ratios-ttm` endpoint on a best-effort basis — if they show
-  as `—` for symbols that should have them, the field names may need a small adjustment in
-  `shapeAnalysis` in `backend/server.js`.
+- FMP's free tier restricts `/quote` and `/ratios-ttm` to a set of symbols (confirmed via
+  their own "not available under your current subscription" error) — most common large-caps
+  work fine (AAPL, MSFT, GOOGL, TSLA, NVDA, META, AMZN, COIN, NFLX, PLTR all verified), but a
+  few (IBM, RDDT, SNOW in testing) don't. Price and chart are unaffected either way; only the
+  fundamentals stat cards fall back to "—" for a restricted symbol.

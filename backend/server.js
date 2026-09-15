@@ -192,15 +192,6 @@ async function fetchFundamentals(symbol) {
   });
 }
 
-// TEMPORARY diagnostic route - remove once fundamentals are confirmed working.
-app.get('/api/debug/fundamentals/:symbol', async (req, res) => {
-  try {
-    res.json(await fetchFundamentals(req.params.symbol.toUpperCase()));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 function shapeAnalysis({ profile, quote, ratios }) {
   // FMP's /ratios-ttm expresses debt/equity as a plain ratio (e.g. 0.78); scaled by 100 to
   // match the percent-style convention shown elsewhere (Yahoo/Twelve Data-style "78.4").
