@@ -151,7 +151,16 @@ async function fmpFetch(endpoint, symbol) {
   if (!FMP_KEY) throw new Error('FMP_API_KEY is not set on the server');
   const url = `${FMP_BASE}/${endpoint}?${new URLSearchParams({ symbol, apikey: FMP_KEY })}`;
   const res = await fetch(url);
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    // FMP sometimes returns a plain-text upsell/limit message instead of JSON.
+    const err = new Error(text.slice(0, 300) || `FMP request failed (HTTP ${res.status})`);
+    err.rateLimited = /premium|limit/i.test(text);
+    throw err;
+  }
   if (data['Error Message']) {
     const err = new Error(data['Error Message']);
     err.rateLimited = /limit/i.test(data['Error Message']);
