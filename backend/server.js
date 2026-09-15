@@ -287,7 +287,11 @@ async function geminiGenerate(prompt, schema) {
   });
   const data = await res.json();
   if (data.error) {
-    const err = new Error(data.error.message || 'Gemini request failed');
+    console.error('[gemini] error response:', JSON.stringify(data.error));
+    const detail = data.error.details?.map((d) => d.reason || d['@type']).join(', ');
+    const err = new Error(
+      `${data.error.message || 'Gemini request failed'} (status: ${data.error.status || res.status}${detail ? `, reason: ${detail}` : ''})`
+    );
     err.rateLimited = data.error.code === 429 || /quota|rate/i.test(data.error.message || '');
     throw err;
   }
