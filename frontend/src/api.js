@@ -6,7 +6,10 @@ const BASE = `${import.meta.env.VITE_API_URL || ''}/api`;
 
 async function get(path) {
   const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `Request failed: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -16,6 +19,7 @@ export const api = {
   quotes: (symbols) => get(`/quotes?symbols=${encodeURIComponent(symbols.join(','))}`),
   chart: (symbol, range = '3mo') => get(`/chart/${encodeURIComponent(symbol)}?range=${range}`),
   analysis: (symbol) => get(`/analysis/${encodeURIComponent(symbol)}`),
+  deepDive: (symbol) => get(`/deepdive/${encodeURIComponent(symbol)}`),
   watchlist: {
     list: () => get('/watchlist'),
     add: async (symbol) => {

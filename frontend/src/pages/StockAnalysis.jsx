@@ -25,6 +25,14 @@ export default function StockAnalysis() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [inWatchlist, setInWatchlist] = useState(false)
+  const [deepDive, setDeepDive] = useState(null)
+  const [deepDiveLoading, setDeepDiveLoading] = useState(false)
+  const [deepDiveError, setDeepDiveError] = useState(null)
+
+  useEffect(() => {
+    setDeepDive(null)
+    setDeepDiveError(null)
+  }, [symbol])
 
   useEffect(() => {
     if (!symbol) return
@@ -45,6 +53,18 @@ export default function StockAnalysis() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [symbol, range])
+
+  async function runDeepDive() {
+    setDeepDiveLoading(true)
+    setDeepDiveError(null)
+    try {
+      setDeepDive(await api.deepDive(symbol))
+    } catch (err) {
+      setDeepDiveError(err.message)
+    } finally {
+      setDeepDiveLoading(false)
+    }
+  }
 
   async function toggleWatchlist() {
     if (inWatchlist) {
@@ -176,6 +196,46 @@ export default function StockAnalysis() {
               <p className="muted">{profile.longBusinessSummary}</p>
             </div>
           )}
+
+          <div className="card">
+            <div className="deepdive-header">
+              <h3>Deep Dive</h3>
+              <button className="btn btn-outline" onClick={runDeepDive} disabled={deepDiveLoading}>
+                {deepDiveLoading ? 'Generating…' : deepDive ? 'Regenerate' : 'Generate'}
+              </button>
+            </div>
+            {!deepDive && !deepDiveLoading && !deepDiveError && (
+              <p className="muted small">
+                AI-generated bull/bear read on growth, moat, management, margins, cash, risk, and
+                timing — grounded in the data above, not financial advice.
+              </p>
+            )}
+            {deepDiveError && <p className="error small">{deepDiveError}</p>}
+            {deepDive && (
+              <div className="deepdive-list">
+                {deepDive.questions.map((q, i) => (
+                  <div key={i} className="deepdive-question">
+                    <h4>
+                      {i + 1}. {q.title}
+                    </h4>
+                    <p>
+                      <strong className="up">Bull case: </strong>
+                      {q.bullCase}
+                    </p>
+                    <p>
+                      <strong className="down">Bear case: </strong>
+                      {q.bearCase}
+                    </p>
+                    <p className="muted small">{q.dataBasis}</p>
+                  </div>
+                ))}
+                <div className="deepdive-open">
+                  <strong>Open question: </strong>
+                  {deepDive.openQuestion}
+                </div>
+              </div>
+            )}
+          </div>
         </>
       )}
     </div>

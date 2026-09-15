@@ -45,6 +45,7 @@ const TTL = {
   chart: 24 * 60 * 60 * 1000, // 24 hr
   fundamentals: 24 * 60 * 60 * 1000, // 24 hr
   search: 60 * 60 * 1000, // 1 hr
+  deepDive: 24 * 60 * 60 * 1000, // 24 hr - also keeps Gemini's free-tier quota comfortably safe
 };
 
 const cache = new Map();
@@ -224,6 +225,142 @@ function shapeAnalysis({ profile, quote, ratios }) {
   };
 }
 
+// --- Deep Dive: Gemini-generated 7-question analysis ------------------------------------------
+// Uses Google Gemini's free API tier (no billing required) to write a bull/bear analysis of a
+// stock through a 7-question framework, grounded in the real quote/fundamentals data already
+// fetched above. Cached for 24h per symbol - both to respect Gemini's free-tier rate limits and
+// because the underlying data doesn't change meaningfully within a day.
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+const DEEP_DIVE_QUESTIONS = [
+  {
+    title: 'Is the business growing?',
+    guidance:
+      'Revenue trajectory over the last 3-5 years - rate of growth, and whether it is decelerating or accelerating. Flat or declining growth is a real concern worth naming clearly, paired with why (macro cyclicality, market share loss, mature TAM). Note consensus forward growth estimates vs. trailing growth where relevant.',
+  },
+  {
+    title: 'Can they defend their position?',
+    guidance:
+      'Moat sources - network effects, brand power, switching costs, regulatory/licensing barriers, scale economics. Could a well-capitalized competitor meaningfully take share within ~2 years? Bull case cites the specific moat mechanism and evidence it is holding. Bear case names the plausible disruptor or erosion vector, not a generic "competition risk" hand-wave.',
+  },
+  {
+    title: 'Is management competent?',
+    guidance:
+      'Capital allocation track record (buybacks vs. dividends vs. reinvestment vs. M&A quality), insider buying/selling patterns, and whether prior guidance has actually been met. Note specific instances rather than a vague competence rating. Flag if there is insufficient public track record to judge yet - that is itself a data point.',
+  },
+  {
+    title: 'Are margins improving or declining?',
+    guidance:
+      'Gross and operating margin trends over 3+ years, and - importantly - why they are moving (pricing power vs. cost discipline vs. rising competition vs. one-off items). Separate margin compression from rising competitive intensity vs. a temporary input-cost spike vs. an intentional reinvestment phase.',
+  },
+  {
+    title: "What's the cash situation?",
+    guidance:
+      'Operating cash flow trend and whether it is converting into free cash flow; whether cash flow tracks reported earnings (divergence is a quality-of-earnings flag) or is being propped up by financing activity. State burn rate against cash on hand and what financing risk that implies, if relevant.',
+  },
+  {
+    title: "What's the risk?",
+    guidance:
+      'Name three concrete risks specific to this company right now - regulatory exposure, competitive entrants, macro/rate sensitivity, debt/refinancing, customer/supplier concentration. "Regulation" alone is not a risk statement; be specific. Give this section real weight - it is where the bear case gets its sharpest teeth.',
+  },
+  {
+    title: 'Is the timing right?',
+    guidance:
+      'Valuation relative to own history and to peers, recent price action, and upcoming catalysts (earnings date, product launch, regulatory decision, macro event) that could move the thesis near-term. This is explicitly not "should you buy now" - lay out what is priced in already vs. what is not.',
+  },
+];
+
+const BALANCED_ANALYST_RULES = `Apply a balanced-analyst approach throughout: present the bull case and bear case for each question with equal rigor. Never give a buy/sell verdict or recommendation anywhere in the output. Explicitly flag genuine uncertainty rather than papering over it. In each question's "dataBasis" field, distinguish what is grounded in the real data provided below versus what is your own general knowledge/inference about the company and industry. Where a question surfaces a genuine red flag, state it plainly and weight it appropriately, but frame it as "the bear case's strongest pillar" rather than an automatic disqualification - the reader makes the call.`;
+
+async function geminiGenerate(prompt, schema) {
+  if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY is not set on the server');
+  const url = `${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
+    }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    const err = new Error(data.error.message || 'Gemini request failed');
+    err.rateLimited = data.error.code === 429 || /quota|rate/i.test(data.error.message || '');
+    throw err;
+  }
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini returned no usable content (it may have been blocked by a safety filter)');
+  return JSON.parse(text);
+}
+
+async function fetchDeepDive(symbol) {
+  return cached(`deepdive:${symbol}`, TTL.deepDive, async () => {
+    const [quote, fundamentalsRaw] = await Promise.all([
+      fetchQuote(symbol).catch(() => null),
+      fetchFundamentals(symbol).catch(() => null),
+    ]);
+    const f = fundamentalsRaw ? shapeAnalysis(fundamentalsRaw) : null;
+
+    const dataSummary = [
+      `Company: ${f?.assetProfile?.name || symbol} (${symbol})`,
+      `Sector / Industry: ${f?.assetProfile?.sector || 'unknown'} / ${f?.assetProfile?.industry || 'unknown'}`,
+      `Current price: ${quote?.regularMarketPrice ?? 'unknown'} (${quote?.regularMarketChangePercent ?? '?'}% today)`,
+      `Market cap: ${f?.summaryDetail?.marketCap ?? 'unknown'}`,
+      `Trailing P/E: ${f?.summaryDetail?.trailingPE ?? 'unknown'}`,
+      `EPS (TTM): ${f?.defaultKeyStatistics?.trailingEps ?? 'unknown'}`,
+      `52-week range: ${f?.summaryDetail?.fiftyTwoWeekLow ?? '?'} - ${f?.summaryDetail?.fiftyTwoWeekHigh ?? '?'}`,
+      `Beta: ${f?.summaryDetail?.beta ?? 'unknown'}`,
+      `Dividend yield: ${f?.summaryDetail?.dividendYield ?? 'unknown'}`,
+      `Net profit margin (TTM): ${f?.financialData?.profitMargins ?? 'unknown'}`,
+      `Debt/Equity: ${f?.financialData?.debtToEquity ?? 'unknown'}`,
+      `Business description: ${f?.assetProfile?.longBusinessSummary || 'not available'}`,
+    ].join('\n');
+
+    const questionsBlock = DEEP_DIVE_QUESTIONS.map((q, i) => `${i + 1}. ${q.title}\n   Look at: ${q.guidance}`).join(
+      '\n\n'
+    );
+
+    const prompt = `You are a balanced equity research analyst. Below is real, current data for one stock, followed by a 7-question evaluation framework. Produce a JSON object analyzing this stock through all 7 questions, in order.
+
+${BALANCED_ANALYST_RULES}
+
+REAL DATA FOR ${symbol}:
+${dataSummary}
+
+FRAMEWORK QUESTIONS (answer all 7, in this order):
+${questionsBlock}
+
+For each question, write a "bullCase" and "bearCase" of 2-4 sentences each, and a short "dataBasis" note. End with a 1-2 sentence "openQuestion" naming the next dated catalyst or open uncertainty (per question 7's framing), with no buy/sell verdict anywhere in the response.`;
+
+    const schema = {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              bullCase: { type: 'string' },
+              bearCase: { type: 'string' },
+              dataBasis: { type: 'string' },
+            },
+            required: ['title', 'bullCase', 'bearCase', 'dataBasis'],
+          },
+        },
+        openQuestion: { type: 'string' },
+      },
+      required: ['questions', 'openQuestion'],
+    };
+
+    const result = await geminiGenerate(prompt, schema);
+    return { ...result, generatedAt: new Date().toISOString() };
+  });
+}
+
 const WATCHLIST_FILE = path.join(__dirname, 'watchlist.json');
 const PORTFOLIO_FILE = path.join(__dirname, 'portfolio.json');
 const ALERTS_FILE = path.join(__dirname, 'alerts.json');
@@ -320,6 +457,15 @@ app.get('/api/analysis/:symbol', async (req, res) => {
   try {
     const fundamentals = await fetchFundamentals(req.params.symbol.toUpperCase());
     res.json(shapeAnalysis(fundamentals));
+  } catch (err) {
+    handleMarketDataError(err, res);
+  }
+});
+
+// 7-question Deep Dive (Gemini-generated, cached 24h per symbol)
+app.get('/api/deepdive/:symbol', async (req, res) => {
+  try {
+    res.json(await fetchDeepDive(req.params.symbol.toUpperCase()));
   } catch (err) {
     handleMarketDataError(err, res);
   }

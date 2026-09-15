@@ -587,3 +587,47 @@ body {
   padding: 1px 7px;
   line-height: 1.5;
 }
+
+.deepdive-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.deepdive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.deepdive-question {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.deepdive-question:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.deepdive-question h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.deepdive-question p {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.deepdive-open {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+}

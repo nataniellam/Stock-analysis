@@ -1,9 +1,9 @@
 # Stockwise
 
-A stock analysis app: live quotes and fundamentals, a portfolio tracker, a watchlist, and
-price/volume alerts. Backend is a small Express API (Twelve Data for quotes/charts/search,
-Financial Modeling Prep for fundamentals — see "Why two market-data providers" below);
-frontend is React (Vite).
+A stock analysis app: live quotes and fundamentals, a portfolio tracker, a watchlist,
+price/volume alerts, and an AI-generated 7-question Deep Dive. Backend is a small Express API
+(Twelve Data for quotes/charts/search, Financial Modeling Prep for fundamentals — see "Why two
+market-data providers" below, Gemini for the Deep Dive); frontend is React (Vite).
 
 ## Run it locally
 
@@ -51,6 +51,19 @@ the backend. (In production, this is swapped for Upstash Redis — see step 2a b
 so data survives redeploys. Locally, without Upstash env vars set, it just uses these
 files, so there's no need to sign up for anything to develop.)
 
+### Deep Dive (optional)
+
+The Stock Analysis page has a "Deep Dive" section: an AI-generated bull/bear read on a stock
+through a 7-question framework (growth, moat, management, margins, cash, risk, timing),
+grounded in the real quote/fundamentals data already on the page. It's powered by Google
+Gemini's free API tier (no billing required) — get a key at
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`.
+
+It's entirely optional — without the key, that section just shows a clear message instead of
+data, and everything else in the app is unaffected. It's also on-demand (a "Generate" button,
+not auto-loaded) and cached 24h per symbol, both to keep it comfortably within Gemini's free
+rate limits.
+
 ## Deploying it
 
 Two pieces, deployed separately: the backend (Render) and the frontend (Vercel). Both have
@@ -80,6 +93,7 @@ gh repo create stockwise --private --source=. --push
 3. It'll ask you to fill in a few env vars:
    - `TWELVE_DATA_API_KEY` — your key from [twelvedata.com](https://twelvedata.com) (required for quotes/charts/search).
    - `FMP_API_KEY` — your key from [Financial Modeling Prep](https://site.financialmodelingprep.com/developer/docs) (required for the fundamentals stats on the Analysis page).
+   - `GEMINI_API_KEY` — optional, your key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (only needed for the Deep Dive section).
    - `CORS_ORIGIN` — leave blank for now (you'll set it after step 3, once you know your Vercel URL). You can also leave it unset permanently; the backend defaults to allowing any origin, which is fine for personal use.
 4. Deploy. Note the URL Render gives you, e.g. `https://stockwise-backend.onrender.com`.
 
