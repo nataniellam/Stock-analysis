@@ -172,9 +172,23 @@ async function fetchFundamentals(symbol) {
       profile: profileRes.status === 'fulfilled' ? profileRes.value?.[0] : null,
       quote: quoteRes.status === 'fulfilled' ? quoteRes.value?.[0] : null,
       ratios: ratiosRes.status === 'fulfilled' ? ratiosRes.value?.[0] : null,
+      _debug: {
+        profileError: profileRes.status === 'rejected' ? profileRes.reason?.message : null,
+        quoteError: quoteRes.status === 'rejected' ? quoteRes.reason?.message : null,
+        ratiosError: ratiosRes.status === 'rejected' ? ratiosRes.reason?.message : null,
+      },
     };
   });
 }
+
+// TEMPORARY diagnostic route - remove once fundamentals are confirmed working.
+app.get('/api/debug/fundamentals/:symbol', async (req, res) => {
+  try {
+    res.json(await fetchFundamentals(req.params.symbol.toUpperCase()));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 function parseRange(rangeStr) {
   const parts = (rangeStr || '').split('-').map((s) => numOrNull(s.trim()));
