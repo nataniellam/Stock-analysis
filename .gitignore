@@ -1,0 +1,7 @@
+node_modules/
+backend/watchlist.json
+backend/portfolio.json
+backend/alerts.json
+frontend/dist/
+frontend/.env
+frontend/.env.local
