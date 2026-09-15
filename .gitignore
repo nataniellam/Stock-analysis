@@ -5,3 +5,5 @@ backend/alerts.json
 frontend/dist/
 frontend/.env
 frontend/.env.local
+backend/.env
+backend/.env.local

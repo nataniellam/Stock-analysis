@@ -23,7 +23,9 @@ automatically (see `frontend/vite.config.js`) — no configuration needed locall
 
 Your watchlist, portfolio, and alerts are stored in `backend/*.json` files (gitignored) —
 they persist across restarts as long as those files stick around on the machine running
-the backend.
+the backend. (In production, this is swapped for Upstash Redis — see step 2a below —
+so data survives redeploys. Locally, without Upstash env vars set, it just uses these
+files, so there's no need to sign up for anything to develop.)
 
 ## Deploying it
 
@@ -60,6 +62,23 @@ gh repo create stockwise --private --source=. --push
 The next request wakes it up but takes 30–60 seconds. Fine for personal use; upgrade to a
 paid instance (~$7/mo) if that delay bothers you.
 
+### 2a. Set up persistent storage (Upstash Redis)
+
+Render's free-tier disk isn't guaranteed to survive redeploys, so watchlist/portfolio/alerts
+data is stored in Upstash Redis instead when these two env vars are set (falls back to local
+JSON files when they're not — e.g. in local dev):
+
+1. Sign up at [upstash.com](https://upstash.com) (free).
+2. Create a Redis database (any region close to your Render service; free tier is plenty).
+3. Open its **Details** page → **REST API** section. Copy the `UPSTASH_REDIS_REST_URL` and
+   `UPSTASH_REDIS_REST_TOKEN` values shown there.
+4. Back in Render, on your service's **Environment** tab, paste those in as
+   `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (if you deployed via the
+   `render.yaml` blueprint, these rows are already there waiting for values). Save — Render
+   redeploys automatically.
+
+That's it — no code changes needed, and this stays on Upstash's free tier for personal use.
+
 ### 3. Deploy the frontend to Vercel
 
 1. Sign up at [vercel.com](https://vercel.com) (free).
@@ -77,10 +96,5 @@ you ever share the link.
 
 ## Notes / limitations
 
-- Watchlist/portfolio/alerts data lives in JSON files on the backend's disk. Render's free
-  tier disk is not guaranteed to persist across redeploys (pushing new code can reset it).
-  Fine for casual personal use; if you want data to reliably survive redeploys, that'd mean
-  swapping the JSON files for a real database (e.g. Render's free Postgres) — ask if you
-  want that done.
 - No authentication — anyone with the URL can view/edit your watchlist, portfolio, and
   alerts. Fine as long as you don't share the link.
