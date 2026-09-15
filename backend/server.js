@@ -231,7 +231,7 @@ function shapeAnalysis({ profile, quote, ratios }) {
 // fetched above. Cached for 24h per symbol - both to respect Gemini's free-tier rate limits and
 // because the underlying data doesn't change meaningfully within a day.
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 const DEEP_DIVE_QUESTIONS = [
@@ -304,13 +304,13 @@ async function geminiGenerateOnce(prompt, schema) {
 }
 
 // Gemini's free tier occasionally returns a transient "high demand" UNAVAILABLE error -
-// retry a couple of times with backoff before giving up, since a fresh request often succeeds.
+// retry a few times with backoff before giving up, since a fresh request often succeeds.
 async function geminiGenerate(prompt, schema, attempt = 1) {
   try {
     return await geminiGenerateOnce(prompt, schema);
   } catch (err) {
-    if (err.retryable && attempt < 3) {
-      await sleep(attempt * 1500);
+    if (err.retryable && attempt < 5) {
+      await sleep(attempt * 2000);
       return geminiGenerate(prompt, schema, attempt + 1);
     }
     throw err;
