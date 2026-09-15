@@ -6,10 +6,28 @@ const path = require('path');
 const { Redis } = require('@upstash/redis');
 
 const app = express();
-// In production, set CORS_ORIGIN to your deployed frontend's URL (e.g. https://your-app.vercel.app).
-// Left unset (or "*"), it allows any origin - fine for personal use, but tighten it if you ever
-// share the URL publicly.
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+// In production, set CORS_ORIGIN to your deployed frontend's stable production URL
+// (e.g. https://your-app.vercel.app). Left unset, it allows any origin - fine for personal
+// use, but tighten it if you ever share the URL publicly.
+//
+// Vercel also generates a new "preview" URL (a random hash) on every push, distinct from the
+// stable production URL - this always allows those too (matched by project name pattern), so
+// opening a preview deployment link doesn't get blocked just because CORS_ORIGIN only names
+// the production one.
+const CORS_ORIGIN = process.env.CORS_ORIGIN;
+const VERCEL_PREVIEW_PATTERN = /^https:\/\/stock-analysis(-[a-z0-9]+)*\.vercel\.app$/i;
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true); // non-browser requests (curl, health checks)
+      if (!CORS_ORIGIN || origin === CORS_ORIGIN || VERCEL_PREVIEW_PATTERN.test(origin)) {
+        return callback(null, true);
+      }
+      callback(null, false);
+    },
+  })
+);
 app.use(express.json());
 
 app.get('/', (req, res) => res.send('Stockwise API is running.'));

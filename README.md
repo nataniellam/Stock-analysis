@@ -106,21 +106,23 @@ That's it — no code changes needed, and this stays on Upstash's free tier for 
 ### 4. (Optional) Lock down CORS
 
 Back in Render, set `CORS_ORIGIN` to your Vercel URL from step 3 and redeploy. This makes
-the backend only accept requests from your frontend instead of any origin — worth doing if
-you ever share the link.
-
-**Get this value exactly right** — it must be the full origin, protocol included, no
-trailing slash, and it must be your stable production URL, not a one-off preview deployment
-URL (Vercel generates a new preview URL on every push; your production domain, shown at the
-top of the project's Vercel dashboard, stays constant):
+the backend only accept requests from your frontend's origin instead of any origin — worth
+doing if you ever share the link. Get the value exactly right: full origin, protocol
+included, no trailing slash:
 
 ```
 https://stockwise-yourname.vercel.app
 ```
 
-A missing `https://`, a trailing slash, or a preview URL there will make every request fail
-with a CORS error in the browser console ("Failed to fetch" on the page) even though the
-backend itself is up and healthy — check this env var first if that happens.
+Vercel also generates a new "preview" URL (a random hash, e.g.
+`stockwise-abc123-yourname.vercel.app`) on every push, separate from the stable production
+URL above — the backend always allows those too automatically (matched by project name
+pattern), so opening a preview link won't get blocked just because `CORS_ORIGIN` only names
+production.
+
+A missing `https://` or a trailing slash on `CORS_ORIGIN` will make every request fail with
+a CORS error in the browser console ("Failed to fetch" on the page) even though the backend
+itself is up and healthy — check this env var first if that happens.
 
 ## Notes / limitations
 
