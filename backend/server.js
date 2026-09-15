@@ -192,33 +192,28 @@ app.get('/api/debug/fundamentals/:symbol', async (req, res) => {
   }
 });
 
-function parseRange(rangeStr) {
-  const parts = (rangeStr || '').split('-').map((s) => numOrNull(s.trim()));
-  return parts.length === 2 ? parts : [null, null];
-}
-
 function shapeAnalysis({ profile, quote, ratios }) {
-  const [profileLow, profileHigh] = parseRange(profile?.range);
-  const dividendYield =
-    profile?.price && profile?.lastDiv ? profile.lastDiv / profile.price : numOrNull(ratios?.dividendYielTTM);
+  // FMP's /ratios-ttm expresses debt/equity as a plain ratio (e.g. 0.78); scaled by 100 to
+  // match the percent-style convention shown elsewhere (Yahoo/Twelve Data-style "78.4").
+  const debtToEquity = ratios?.debtToEquityRatioTTM != null ? ratios.debtToEquityRatioTTM * 100 : null;
   return {
     summaryDetail: {
-      marketCap: numOrNull(quote?.marketCap ?? profile?.mktCap),
-      trailingPE: numOrNull(quote?.pe ?? ratios?.peRatioTTM),
-      fiftyTwoWeekLow: numOrNull(quote?.yearLow) ?? profileLow,
-      fiftyTwoWeekHigh: numOrNull(quote?.yearHigh) ?? profileHigh,
-      averageVolume: numOrNull(quote?.avgVolume ?? profile?.volAvg),
-      dividendYield,
+      marketCap: numOrNull(quote?.marketCap ?? profile?.marketCap),
+      trailingPE: numOrNull(ratios?.priceToEarningsRatioTTM),
+      fiftyTwoWeekLow: numOrNull(quote?.yearLow),
+      fiftyTwoWeekHigh: numOrNull(quote?.yearHigh),
+      averageVolume: numOrNull(profile?.averageVolume),
+      dividendYield: numOrNull(ratios?.dividendYieldTTM),
       beta: numOrNull(profile?.beta),
     },
     defaultKeyStatistics: {
-      trailingEps: numOrNull(quote?.eps),
+      trailingEps: numOrNull(ratios?.netIncomePerShareTTM),
     },
     financialData: {
       targetMeanPrice: null,
       profitMargins: numOrNull(ratios?.netProfitMarginTTM),
       totalRevenue: null,
-      debtToEquity: numOrNull(ratios?.debtEquityRatioTTM),
+      debtToEquity,
     },
     assetProfile: {
       sector: profile?.sector,
