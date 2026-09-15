@@ -149,10 +149,6 @@ async function fetchFundamentals(symbol) {
     return {
       profile: profile.status === 'fulfilled' ? profile.value : null,
       statistics: statistics.status === 'fulfilled' ? statistics.value.statistics : null,
-      _debug: {
-        profileError: profile.status === 'rejected' ? profile.reason?.message : null,
-        statisticsError: statistics.status === 'rejected' ? statistics.reason?.message : null,
-      },
     };
   });
 }
@@ -286,7 +282,7 @@ app.get('/api/chart/:symbol', async (req, res) => {
 app.get('/api/analysis/:symbol', async (req, res) => {
   try {
     const fundamentals = await fetchFundamentals(req.params.symbol.toUpperCase());
-    res.json({ ...shapeAnalysis(fundamentals), _debug: fundamentals._debug });
+    res.json(shapeAnalysis(fundamentals));
   } catch (err) {
     handleMarketDataError(err, res);
   }
