@@ -231,7 +231,7 @@ function shapeAnalysis({ profile, quote, ratios }) {
 // fetched above. Cached for 24h per symbol - both to respect Gemini's free-tier rate limits and
 // because the underlying data doesn't change meaningfully within a day.
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 const DEEP_DIVE_QUESTIONS = [
