@@ -143,12 +143,14 @@ async function fetchChart(symbol, range) {
 // one demo ticker. FMP's free tier (250 req/day) covers company profile + basic ratios for any
 // symbol with no such allowlist.
 const FMP_KEY = process.env.FMP_API_KEY;
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+// FMP retired its old /api/v3/{endpoint}/{symbol} paths for new signups (as of Aug 2025) in
+// favor of a "stable" API using ?symbol= query params instead of path params.
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
-async function fmpFetch(path) {
+async function fmpFetch(endpoint, symbol) {
   if (!FMP_KEY) throw new Error('FMP_API_KEY is not set on the server');
-  const sep = path.includes('?') ? '&' : '?';
-  const res = await fetch(`${FMP_BASE}${path}${sep}apikey=${FMP_KEY}`);
+  const url = `${FMP_BASE}/${endpoint}?${new URLSearchParams({ symbol, apikey: FMP_KEY })}`;
+  const res = await fetch(url);
   const data = await res.json();
   if (data['Error Message']) {
     const err = new Error(data['Error Message']);
@@ -161,9 +163,9 @@ async function fmpFetch(path) {
 async function fetchFundamentals(symbol) {
   return cached(`fundamentals:${symbol}`, TTL.fundamentals, async () => {
     const [profileRes, quoteRes, ratiosRes] = await Promise.allSettled([
-      fmpFetch(`/profile/${symbol}`),
-      fmpFetch(`/quote/${symbol}`),
-      fmpFetch(`/ratios-ttm/${symbol}`),
+      fmpFetch('profile', symbol),
+      fmpFetch('quote', symbol),
+      fmpFetch('ratios-ttm', symbol),
     ]);
     if (profileRes.status === 'rejected') console.error(`[fundamentals] profile ${symbol}:`, profileRes.reason?.message);
     if (quoteRes.status === 'rejected') console.error(`[fundamentals] quote ${symbol}:`, quoteRes.reason?.message);
